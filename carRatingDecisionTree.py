@@ -17,16 +17,11 @@ class LearningDecisionTree:
         '''
         Build and return a subtree using ID3
         '''
-        #Base cases
-        if len(dataset) == 0:
-            return Node()
         
+        #Base Case - All labels in a pure subset are identical
         if purityCheck(dataset, targetIndex) == True:
             return Node(label=dataset[0][targetIndex])
-        
-        #Base case for no attributes left
-        #Base case for no good split
-        
+
         #Calculate the information gain for all possible splits to calculate best attribute
         bestAttribute = candidateAttributes[0]
         bestInformationGain = calculateInformationGain(dataset, bestAttribute, targetIndex)
@@ -35,9 +30,6 @@ class LearningDecisionTree:
             if informationGain > bestInformationGain:
                 bestInformationGain = informationGain
                 bestAttribute = attribute
-
-        if bestInformationGain <= 0:
-            return #No useful split, return majority label 
 
         # Create the children nodes
         currentNode = Node(attribute=bestAttribute)
@@ -107,20 +99,78 @@ def calculateInformationGain(dataset, attributeIndex, targetIndex):
     informationGain = datasetEntropy - weightedEntropySum
     return informationGain
 
-def majorityLabel(dataset, targetIndex):
-    '''
-    Finds the label with the 
-    '''
-    labelCounts = Counter()
+def calculateMajorityLabel(dataset, targetIndex):
+    """
+    Returns the majority class label from the dataset.
+    """
+    labels = []
     for row in dataset:
-        label = row[targetIndex]
-        labelCounts[label] += 1
+        labels.append(row[targetIndex])
+    
+    # Count how many times each label appears
+    labelCounts = Counter(labels)  
 
-    # Get the most common label using Counter.most_common
-    mostCommonList = labelCounts.most_common(1)  # returns [(label, count)]
-    majorityLabel = mostCommonList[0][0]
-
+    majorityLabel = labelCounts.most_common(1)[0][0]
     return majorityLabel
+
+def predict(node, datapoint, majorityLabel):
+    '''
+    Recursive prediction algorithm that traverses the tree 
+    and returns the predicted label for the datapoint
+    '''
+    
+    #Handles if a branch has an attribute that was not in the training data
+    if node is None:
+        return majorityLabel
+
+    #Base case
+    if node.label is not None:
+        return node.label
+    
+    attributeValue = datapoint[node.attribute]
+
+    #Recurse until a leaf is reached
+    return predict(node.children.get(attributeValue), datapoint, majorityLabel)
+
+def calculateF1(category, trueTargetValueList, predictedTargetValueList):
+    '''
+    Calculates the F1 of the predictions for a single category
+    '''
+    truePositives = 0
+    falsePositives = 0
+    falseNegatives = 0
+
+    #Compare the lists to generate the TP, FP and FN
+    if len(trueTargetValueList) != len(predictedTargetValueList):
+        print("UNEVEN")
+
+    for i in range(len(trueTargetValueList)):
+        if trueTargetValueList[i] == category and predictedTargetValueList[i] == category:
+            truePositives += 1
+        elif trueTargetValueList[i] != category and predictedTargetValueList[i] == category:
+            falsePositives += 1
+        elif trueTargetValueList[i] == category and predictedTargetValueList[i] != category:
+            falseNegatives += 1
+
+    # Precision
+    if (truePositives + falsePositives) > 0:
+        precision = truePositives / (truePositives + falsePositives)
+    else:
+        precision = 0
+
+    # Recall
+    if (truePositives + falseNegatives) > 0:
+        recall = truePositives / (truePositives + falseNegatives)
+    else:
+        recall = 0
+
+    # F1
+    if (precision + recall) > 0:
+        f1 = 2 * (precision * recall) / (precision + recall)
+    else:
+        f1 = 0
+
+    return precision, recall, f1
 
 def main():
     # Prepare the data
@@ -128,6 +178,7 @@ def main():
         carDataReader = csv.reader(carDataFile) 
         carData = list(carDataReader) # Extract the data into a list of data points
 
+    dataAttributes = carData[0]  #Store the header row as the list of attributes
     carData = carData[1:] # Remove the header
     random.shuffle(carData)
 
@@ -145,6 +196,64 @@ def main():
     #Build the tree using ID3
     carRatingDecisionTree = LearningDecisionTree()
     carRatingDecisionTree.root = carRatingDecisionTree.ID3(trainingData, candidateAttributes, targetIndex)
+
+    #Make predicitions using the created tree
+    carTrainingDataMajorityLabel = calculateMajorityLabel(trainingData, targetIndex)
+
+    trueTargetValueList = []
+    predictedTargetValueList = []
+    correctPredictions = 0
+    for datapoint in testingData:
+        #Collect accuracy data while predicting
+        trueTargetValue = datapoint[targetIndex]
+        trueTargetValueList.append(trueTargetValue)
+
+        predictedTargetValue = predict(carRatingDecisionTree.root, datapoint, carTrainingDataMajorityLabel)
+        predictedTargetValueList.append(predictedTargetValue)
+        
+        if predictedTargetValue == trueTargetValue:
+            correctPredictions += 1
+
+    carRatingDecisionTreeAccuracy = correctPredictions / len(testingData)
+
+    #Print the testing data
+    #The size of the training and testing sets
+    print("Total dataset size:", len(carData))
+    print("Training dataset size:", len(trainingData))
+    print("Testing dataset size:", len(testingData))
+
+    #Total Accuracy
+    print(f"\nLearning tree accuracy: {carRatingDecisionTreeAccuracy}\n")
+
+    #Precision, recall and F1-score values for each class
+    #Find the labels categories
+    carLabelCategories = []
+    for row in carData[1:]:  
+        labelCategory = row[targetIndex]
+        if labelCategory not in carLabelCategories:
+            carLabelCategories.append(labelCategory)
+
+    #Calculate precision, recall and f1 for each category
+    carLabelCategoriesPrecision = {} #{category, precision}
+    carLabelCategoriesRecall = {} #{category, recall}
+    carLabelCategoriesF1 = {} #{category, f1}
+
+    for category in carLabelCategories:
+        precision, recall, f1 = calculateF1(category, trueTargetValueList, predictedTargetValueList)
+
+        carLabelCategoriesPrecision[category] = precision
+        carLabelCategoriesRecall[category] = recall
+        carLabelCategoriesF1[category] = f1
+
+        print(f"Class: {category}")
+        print(f"  Precision: {precision:.3f}")
+        print(f"  Recall:    {recall:.3f}")
+        print(f"  F1-score:  {f1:.3f}\n")
+
+    #Calculate the macro-average
+
+    #Plot the learning curve
+        #Implement accuracy while learning
 
 if __name__ == "__main__":
     main()
