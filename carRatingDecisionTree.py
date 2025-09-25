@@ -3,112 +3,124 @@ from collections import Counter
 import random, math, csv
 
 class Node:
+    '''
+    Node class that the tree is built with
+    '''
     def __init__(self, attribute=None, children=None, label=None):
         self.attribute = attribute
-        self.children = children or {} # {featureValue, node}
+        self.children = children or {} # {attributeValue, node}
         self.label = label
 
 
 class LearningDecisionTree:
+    '''
+    LearningDecisionTree class that stores a root Node
+    '''
     def __init__(self, root=None):
         self.root = root
 
     def ID3(self, dataset, candidateAttributes, targetIndex):
         '''
-        Build and return a subtree using ID3
+        Recursively builds a decision tree
         '''
         
         #Base Case - All labels in a pure subset are identical
         if purityCheck(dataset, targetIndex) == True:
             return Node(label=dataset[0][targetIndex])
 
-        #Calculate the information gain for all possible splits to calculate best attribute
-        bestAttribute = candidateAttributes[0]
+        #Calculate the information gain for all possible splits to find best attribute
+        bestAttribute = candidateAttributes[0] #Process the first attribute before comparing with others
         bestInformationGain = calculateInformationGain(dataset, bestAttribute, targetIndex)
+
+        #Compare all the possible splits
         for attribute in candidateAttributes[1:]:
             informationGain = calculateInformationGain(dataset, attribute, targetIndex)
             if informationGain > bestInformationGain:
                 bestInformationGain = informationGain
                 bestAttribute = attribute
 
-        # Create the children nodes
+        #Create the current node using the best split
         currentNode = Node(attribute=bestAttribute)
-        partitions = partitionAttribute(dataset, bestAttribute)
-        childrenCandidateAttributes = []
-        for attribute in candidateAttributes:
-            if attribute != bestAttribute:
-                childrenCandidateAttributes.append(attribute)
 
-        for attributeValue, subset in partitions.items():
-            childSubtree = self.ID3(subset, childrenCandidateAttributes[:], targetIndex)
-            currentNode.children[attributeValue] = childSubtree
+        #Pass on the candidate attributes except the one that was split on
+        childrenCandidateAttributes = []
+        for category in candidateAttributes:
+            if category != bestAttribute:
+                childrenCandidateAttributes.append(category)
+
+        #Create children for each category
+        categoryDatapoints = findCategoryDatapoints(dataset, bestAttribute)
+        for attributeValue, datapoints in categoryDatapoints.items():
+            childSubtree = self.ID3(datapoints, childrenCandidateAttributes[:], targetIndex) 
+            #The datapoints of a category is the new dataset, refining the dataset down 
+            # no branches are ever made, just logically as the subset of the dataset follows the split condition 
+            # e.g. if safety is med, then the subset that is used in the next recursice iteration is all datapoints where the safety is med
+            currentNode.children[attributeValue] = childSubtree #Add to 
 
         return currentNode
     
 class PredictionData:
+    '''
+    Class that manages the data and metrics of a decision tree's predictions
+    '''
     def __init__(self):
         self.trueTargetValueList = []
         self.predictedTargetValueList = []
         self.correctPredictions = 0
         self.accuracy = 0
-        self.macroAverage = 0
-        self.weightedAverage = 0
+        self.precisionMacroAverage = 0
+        self.recallMacroAverage = 0
+        self.f1MacroAverage = 0
 
-    def predictDataset(self, tree, dataset, majorityLabel):
+    def predictDataset(self, tree, dataset, majorityLabel, targetIndex):
+        '''
+        Uses a built decision tree to predict the values of a given dataset and data tracking
+        '''
+
+        #Predict the target of all datapoints
         for datapoint in dataset:
-            #Collect accuracy data while predicting
-            trueTargetValue = datapoint[-1]
+            #Collect actual value of target
+            trueTargetValue = datapoint[targetIndex]
             self.trueTargetValueList.append(trueTargetValue)
 
+            #Make a predicition 
             predictedTargetValue = predict(tree.root, datapoint, majorityLabel)
+
+            #Collect predicted value of target
             self.predictedTargetValueList.append(predictedTargetValue)
             
+            #Manage correct predictions
             if predictedTargetValue == trueTargetValue:
                 self.correctPredictions += 1
 
-    def calculateF1(self, category, trueTargetValueList, predictedTargetValueList):
+    def calculatePerformanceMetrics(self, category):
         '''
-        Calculates the F1 of the predictions for a single category
+        Calculates precision, recall and f1 of the predictions for a single category
         '''
+
+        #Compute confusion matrix
         truePositives = 0
         falsePositives = 0
         falseNegatives = 0
-
-        #Compare the lists to generate the TP, FP and FN
-        if len(trueTargetValueList) != len(predictedTargetValueList):
-            print("UNEVEN")
-
-        for i in range(len(trueTargetValueList)):
-            if trueTargetValueList[i] == category and predictedTargetValueList[i] == category:
+        for i in range(len(self.trueTargetValueList)):
+            if self.trueTargetValueList[i] == category and self.predictedTargetValueList[i] == category:
                 truePositives += 1
-            elif trueTargetValueList[i] != category and predictedTargetValueList[i] == category:
+            elif self.trueTargetValueList[i] != category and self.predictedTargetValueList[i] == category:
                 falsePositives += 1
-            elif trueTargetValueList[i] == category and predictedTargetValueList[i] != category:
+            elif self.trueTargetValueList[i] == category and self.predictedTargetValueList[i] != category:
                 falseNegatives += 1
 
-        # Precision
-        if (truePositives + falsePositives) > 0:
-            precision = truePositives / (truePositives + falsePositives)
-        else:
-            precision = 0
-
-        # Recall
-        if (truePositives + falseNegatives) > 0:
-            recall = truePositives / (truePositives + falseNegatives)
-        else:
-            recall = 0
-
-        # F1
-        if (precision + recall) > 0:
-            f1 = 2 * (precision * recall) / (precision + recall)
-        else:
-            f1 = 0
+        #Calculate performance metrics
+        precision = truePositives / (truePositives + falsePositives) if (truePositives + falsePositives) > 0 else 0
+        recall    = truePositives / (truePositives + falseNegatives) if (truePositives + falseNegatives) > 0 else 0
+        f1        = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
 
         return precision, recall, f1
 
-    def calculateMetrics(self, dataset, targetIndex):
+    def calculateEvaluationMetrics(self, dataset, targetIndex):
         '''
-        Calculates metrics for a decision tree. Returns a dictonary: {metric, value}
+        Calculates the macro-average and weighted average evaluation for a decision tree. 
+        Returns a dictonary: {metric, value}.
         '''
         #Find the labels categories
         categories = []
@@ -123,7 +135,7 @@ class PredictionData:
         treeLabelCategoriesF1 = {} #{category, f1}
 
         for category in categories:
-            precision, recall, f1 = self.calculateF1(category, self.trueTargetValueList, self.predictedTargetValueList)
+            precision, recall, f1 = self.calculatePerformanceMetrics(category)
 
             treeLabelCategoriesPrecision[category] = precision
             treeLabelCategoriesRecall[category] = recall
@@ -136,24 +148,56 @@ class PredictionData:
 
         self.accuracy = self.correctPredictions / len(dataset)
 
-        #Calculate the macro-average
-        f1Sum = 0
-        for category in treeLabelCategoriesF1:
-            f1Sum += treeLabelCategoriesF1[category]
-        self.macroAverage = f1Sum / len(treeLabelCategoriesF1)  
+        #Calculate the macro-averages
+        self.precisionMacroAverage = calculateMacroAverage(treeLabelCategoriesPrecision)
+        self.recallMacroAverage = calculateMacroAverage(treeLabelCategoriesRecall)
+        self.f1MacroAverage = calculateMacroAverage(treeLabelCategoriesF1)
 
-        #Calculate the weighted-average
-        weightedF1Sum = 0
-        supportDictonary = Counter(row[targetIndex] for row in dataset)
-        for category in treeLabelCategoriesF1:
-            support = supportDictonary[category]
-            f1 = treeLabelCategoriesF1[category]
-            weightedF1Sum += support * f1
-        self.weightedAverage = weightedF1Sum / len(self.trueTargetValueList)
+        #Calculate the weighted-averages
+        self.precisionWeightedAverage = self.calculateWeightedAverage(treeLabelCategoriesPrecision, dataset, targetIndex)
+        self.recallWeightedAverage = self.calculateWeightedAverage(treeLabelCategoriesRecall, dataset, targetIndex)
+        self.f1WeightedAverage = self.calculateWeightedAverage(treeLabelCategoriesF1, dataset, targetIndex)
+
+        print("Macro averages:")
+        print(f"  Precision: {self.precisionMacroAverage:.3f}")
+        print(f"  Recall:    {self.recallMacroAverage:.3f}")
+        print(f"  F1-score:  {self.f1MacroAverage:.3f}\n")
+
+        print("Weighted averages:")
+        print(f"  Precision: {self.precisionWeightedAverage:.3f}")
+        print(f"  Recall:    {self.recallWeightedAverage:.3f}")
+        print(f"  F1-score:  {self.f1WeightedAverage:.3f}\n")
+
+    def calculateWeightedAverage(self, classMetrics, dataset, targetIndex):
+        '''
+        Compute the weighted-average of a class metric dictionary
+        Σ (support_c * F1_c)) / N
+        '''
+        supportDictionary = Counter(row[targetIndex] for row in dataset)
+
+        weightedSum = 0.0
+        for category in classMetrics:
+            support = supportDictionary[category]
+            metric = classMetrics[category]
+            weightedSum += support * metric
+
+        weightedAverage = weightedSum / len(self.trueTargetValueList)
+        return weightedAverage
+
+def calculateMacroAverage(classMetrics):
+    '''
+    Compute the macro-average of a class metric dictionary
+    (Σ F1_c) / |C|
+    '''
+    total = 0
+    for category in classMetrics:
+        total += classMetrics[category]
+    macroAverage = total / len(classMetrics)
+    return macroAverage
 
 def purityCheck(dataset, targetIndex):
     '''
-    Returns true if a subset of the data is pure (only includes one category of the Y value)
+    Returns true if a subset of the data is pure
     '''
     return calculateEntropy(dataset, targetIndex) == 0
 
@@ -175,17 +219,17 @@ def calculateEntropy(dataset, columnIndex):
 
     return entropy
 
-def partitionAttribute(dataset, attributeIndex):
+def findCategoryDatapoints(dataset, attributeIndex):
     '''
-    Split the dataset on a given attribute
+    Finds the datapoints of all categories of an attribute
     '''
-    partitions = {} #{partitionKey, [keyValue]}
-    for row in dataset:
-        partitionKey = row[attributeIndex]
-        if partitionKey not in partitions:
-            partitions[partitionKey] = []
-        partitions[partitionKey].append(row)
-    return partitions
+    attributeDatapointsDictonary = {} #{category, [datapoints]}
+    for datapoint in dataset:
+        attribute = datapoint[attributeIndex]
+        if attribute not in attributeDatapointsDictonary:
+            attributeDatapointsDictonary[attribute] = []
+        attributeDatapointsDictonary[attribute].append(datapoint)
+    return attributeDatapointsDictonary
 
 def calculateInformationGain(dataset, attributeIndex, targetIndex):
     '''
@@ -194,7 +238,7 @@ def calculateInformationGain(dataset, attributeIndex, targetIndex):
     datasetEntropy = calculateEntropy(dataset, targetIndex) #H(S)
 
     # Calculate entropy after an attribute selection
-    partition = partitionAttribute(dataset, attributeIndex)
+    partition = findCategoryDatapoints(dataset, attributeIndex)
     totalDatasetRows = len(dataset)
 
     # Calculate IG(A,S)
@@ -253,19 +297,21 @@ def buildAndPredictTree(dataset, trainingData, testingData, targetIndex):
 
     # Run predictions on the test set and collect data
     treePredictionData = PredictionData()
-    treePredictionData.predictDataset(decisionTree, testingData, treeTrainingDataMajorityLabel)
-    treePredictionData.calculateMetrics(testingData, targetIndex)
+    treePredictionData.predictDataset(decisionTree, testingData, treeTrainingDataMajorityLabel, targetIndex)
+    treePredictionData.calculateEvaluationMetrics(testingData, targetIndex)
 
     # Print sizes
     print("Total dataset size:", len(dataset))
     print("Training dataset size:", len(trainingData))
     print("Testing dataset size:", len(testingData))
     print(f"\nLearning tree accuracy: {treePredictionData.accuracy:.3f}\n")
-    print(f"Macro Average: {treePredictionData.macroAverage}")
-    print(f"Weighted Average: {treePredictionData.weightedAverage}")
     iterationData = {"accuracy": treePredictionData.accuracy,
-                        "macro-average": treePredictionData.macroAverage,
-                        "weighted-average": treePredictionData.weightedAverage}
+    "macro-precision": treePredictionData.precisionMacroAverage,
+    "macro-recall":    treePredictionData.recallMacroAverage,
+    "macro-f1":        treePredictionData.f1MacroAverage,
+    "weighted-precision": treePredictionData.precisionWeightedAverage,
+    "weighted-recall":    treePredictionData.recallWeightedAverage,
+    "weighted-f1":        treePredictionData.f1WeightedAverage}
 
     return iterationData
 
@@ -282,22 +328,25 @@ def main():
     carTrainingData = carData[:splitIndex]
     carTestingData = carData[splitIndex:]
 
+    #Create multiple trees (trees = increments) using differently sized subsets of the training data
     targetIndex = -1
     increments = 40
-
-    #Should build a tree with a percent of all the training data, print the result. 
-    #It does this until all the training data has been used
     treeData = {}
+
     for i in range(1, increments + 1) :
-        datasetSubsetPercent = i / increments
-        trainingDatapointAmount = max(1, int(datasetSubsetPercent * len(carTrainingData)))  
+        datasetPercent = i / increments
+        trainingDatapointAmount = max(1, int(datasetPercent * len(carTrainingData)))  
 
-        # Slice or sample the training data
-        trainingData = carTrainingData[:trainingDatapointAmount]  
+        #Limit training data
+        trainingDataSubset = carTrainingData[:trainingDatapointAmount]  
 
-        print(f"\nTree with {datasetSubsetPercent:.0%} training data")
-        iterationData = buildAndPredictTree(carData, trainingData, carTestingData, targetIndex)
-        treeData[datasetSubsetPercent * 100] = iterationData
+        print(f"\nTree with {datasetPercent:.0%} training data")
+
+        #Make predictions about testing dataset using the subset of the traingdata
+        iterationData = buildAndPredictTree(carData, trainingDataSubset, carTestingData, targetIndex)
+        
+        #Add iteration data for graph later
+        treeData[datasetPercent * 100] = iterationData
 
     #Create metric graph
     plotDecisionTreeData(treeData)
@@ -307,22 +356,28 @@ def plotDecisionTreeData(treeData):
     percents = sorted(treeData.keys())
 
     # Extract each metric into its own list
-    accuracy = [treeData[p]["accuracy"] for p in percents]
-    macro    = [treeData[p]["macro-average"] for p in percents]
-    weighted = [treeData[p]["weighted-average"] for p in percents]
+    accuracy           = [treeData[p]["accuracy"] for p in percents]
+    macro_precision    = [treeData[p]["macro-precision"] for p in percents]
+    macro_recall       = [treeData[p]["macro-recall"] for p in percents]
+    macro_f1           = [treeData[p]["macro-f1"] for p in percents]
+    weighted_precision = [treeData[p]["weighted-precision"] for p in percents]
+    weighted_recall    = [treeData[p]["weighted-recall"] for p in percents]
+    weighted_f1        = [treeData[p]["weighted-f1"] for p in percents]
 
-    # Plot all three lines
     plt.figure(figsize=(8, 5))
-    plt.plot(percents, accuracy, marker="o", label="Accuracy")
-    plt.plot(percents, macro, marker="o", label="Macro F1")
-    plt.plot(percents, weighted, marker="o", label="Weighted F1")
+    plt.plot(percents, accuracy,           marker="o", label="Accuracy")
+    plt.plot(percents, macro_precision,    marker="o", label="Macro Precision")
+    plt.plot(percents, macro_recall,       marker="o", label="Macro Recall")
+    plt.plot(percents, macro_f1,           marker="o", label="Macro F1")
+    plt.plot(percents, weighted_precision, marker="o", label="Weighted Precision")
+    plt.plot(percents, weighted_recall,    marker="o", label="Weighted Recall")
+    plt.plot(percents, weighted_f1,        marker="o", label="Weighted F1")
 
     plt.xlabel("Training Data Used (%)")
     plt.ylabel("Score")
     plt.title(f"Decision Tree Metrics vs Training Data ({len(treeData)} iterations)")
     plt.grid(True)
     plt.legend()
-    plt.show()
     plt.savefig("car-tree-metrics1.png")
 
 if __name__ == "__main__":
