@@ -44,6 +44,112 @@ class LearningDecisionTree:
             currentNode.children[attributeValue] = childSubtree
 
         return currentNode
+    
+class PredictionData:
+    def __init__(self):
+        self.trueTargetValueList = []
+        self.predictedTargetValueList = []
+        self.correctPredictions = 0
+        self.accuracy = 0
+        self.macroAverage = 0
+        self.weightedAverage = 0
+
+    def predictDataset(self, tree, dataset, majorityLabel):
+        for datapoint in dataset:
+            #Collect accuracy data while predicting
+            trueTargetValue = datapoint[-1]
+            self.trueTargetValueList.append(trueTargetValue)
+
+            predictedTargetValue = predict(tree.root, datapoint, majorityLabel)
+            self.predictedTargetValueList.append(predictedTargetValue)
+            
+            if predictedTargetValue == trueTargetValue:
+                self.correctPredictions += 1
+
+    def calculateF1(self, category, trueTargetValueList, predictedTargetValueList):
+        '''
+        Calculates the F1 of the predictions for a single category
+        '''
+        truePositives = 0
+        falsePositives = 0
+        falseNegatives = 0
+
+        #Compare the lists to generate the TP, FP and FN
+        if len(trueTargetValueList) != len(predictedTargetValueList):
+            print("UNEVEN")
+
+        for i in range(len(trueTargetValueList)):
+            if trueTargetValueList[i] == category and predictedTargetValueList[i] == category:
+                truePositives += 1
+            elif trueTargetValueList[i] != category and predictedTargetValueList[i] == category:
+                falsePositives += 1
+            elif trueTargetValueList[i] == category and predictedTargetValueList[i] != category:
+                falseNegatives += 1
+
+        # Precision
+        if (truePositives + falsePositives) > 0:
+            precision = truePositives / (truePositives + falsePositives)
+        else:
+            precision = 0
+
+        # Recall
+        if (truePositives + falseNegatives) > 0:
+            recall = truePositives / (truePositives + falseNegatives)
+        else:
+            recall = 0
+
+        # F1
+        if (precision + recall) > 0:
+            f1 = 2 * (precision * recall) / (precision + recall)
+        else:
+            f1 = 0
+
+        return precision, recall, f1
+
+    def calculateMetrics(self, dataset, targetIndex):
+        '''
+        Calculates metrics for a decision tree. Returns a dictonary: {metric, value}
+        '''
+        #Find the labels categories
+        categories = []
+        for row in dataset:  
+            labelCategory = row[targetIndex]
+            if labelCategory not in categories:
+                categories.append(labelCategory)
+
+        #Calculate precision, recall and f1 for each category
+        treeLabelCategoriesPrecision = {} #{category, precision}
+        treeLabelCategoriesRecall = {} #{category, recall}
+        treeLabelCategoriesF1 = {} #{category, f1}
+
+        for category in categories:
+            precision, recall, f1 = self.calculateF1(category, self.trueTargetValueList, self.predictedTargetValueList)
+
+            treeLabelCategoriesPrecision[category] = precision
+            treeLabelCategoriesRecall[category] = recall
+            treeLabelCategoriesF1[category] = f1
+
+            print(f"Class: {category}")
+            print(f"  Precision: {precision:.3f}")
+            print(f"  Recall:    {recall:.3f}")
+            print(f"  F1-score:  {f1:.3f}\n")
+
+        self.accuracy = self.correctPredictions / len(dataset)
+
+        #Calculate the macro-average
+        f1Sum = 0
+        for category in treeLabelCategoriesF1:
+            f1Sum += treeLabelCategoriesF1[category]
+        self.macroAverage = f1Sum / len(treeLabelCategoriesF1)  
+
+        #Calculate the weighted-average
+        weightedF1Sum = 0
+        supportDictonary = Counter(row[targetIndex] for row in dataset)
+        for category in treeLabelCategoriesF1:
+            support = supportDictonary[category]
+            f1 = treeLabelCategoriesF1[category]
+            weightedF1Sum += support * f1
+        self.weightedAverage = weightedF1Sum / len(self.trueTargetValueList)
 
 def purityCheck(dataset, targetIndex):
     '''
@@ -132,45 +238,36 @@ def predict(node, datapoint, majorityLabel):
     #Recurse until a leaf is reached
     return predict(node.children.get(attributeValue), datapoint, majorityLabel)
 
-def calculateF1(category, trueTargetValueList, predictedTargetValueList):
-    '''
-    Calculates the F1 of the predictions for a single category
-    '''
-    truePositives = 0
-    falsePositives = 0
-    falseNegatives = 0
+def buildAndPredictTree(dataset, trainingData, testingData, targetIndex):
+    #Calculate candidate attributes
+    candidateAttributes = []
+    for attribute in range(len(trainingData[0]) - 1):
+        candidateAttributes.append(attribute)
 
-    #Compare the lists to generate the TP, FP and FN
-    if len(trueTargetValueList) != len(predictedTargetValueList):
-        print("UNEVEN")
+   # Build the tree using ID3
+    decisionTree = LearningDecisionTree()
+    decisionTree.root = decisionTree.ID3(trainingData, candidateAttributes, targetIndex)
 
-    for i in range(len(trueTargetValueList)):
-        if trueTargetValueList[i] == category and predictedTargetValueList[i] == category:
-            truePositives += 1
-        elif trueTargetValueList[i] != category and predictedTargetValueList[i] == category:
-            falsePositives += 1
-        elif trueTargetValueList[i] == category and predictedTargetValueList[i] != category:
-            falseNegatives += 1
+    # Majority label from training set
+    treeTrainingDataMajorityLabel = calculateMajorityLabel(trainingData, targetIndex)
 
-    # Precision
-    if (truePositives + falsePositives) > 0:
-        precision = truePositives / (truePositives + falsePositives)
-    else:
-        precision = 0
+    # Run predictions on the test set and collect data
+    treePredictionData = PredictionData()
+    treePredictionData.predictDataset(decisionTree, testingData, treeTrainingDataMajorityLabel)
+    treePredictionData.calculateMetrics(testingData, targetIndex)
 
-    # Recall
-    if (truePositives + falseNegatives) > 0:
-        recall = truePositives / (truePositives + falseNegatives)
-    else:
-        recall = 0
+    # Print sizes
+    print("Total dataset size:", len(dataset))
+    print("Training dataset size:", len(trainingData))
+    print("Testing dataset size:", len(testingData))
+    print(f"\nLearning tree accuracy: {treePredictionData.accuracy:.3f}\n")
+    print(f"Macro Average: {treePredictionData.macroAverage}")
+    print(f"Weighted Average: {treePredictionData.weightedAverage}")
+    iterationData = {"accuracy": treePredictionData.accuracy,
+                        "macro-average": treePredictionData.macroAverage,
+                        "weighted-average": treePredictionData.weightedAverage}
 
-    # F1
-    if (precision + recall) > 0:
-        f1 = 2 * (precision * recall) / (precision + recall)
-    else:
-        f1 = 0
-
-    return precision, recall, f1
+    return iterationData
 
 def main():
     # Prepare the data
@@ -178,82 +275,55 @@ def main():
         carDataReader = csv.reader(carDataFile) 
         carData = list(carDataReader) # Extract the data into a list of data points
 
-    dataAttributes = carData[0]  #Store the header row as the list of attributes
     carData = carData[1:] # Remove the header
     random.shuffle(carData)
 
-    splitIndex = len(carData) // 2
-    trainingData = carData[:splitIndex]
-    testingData = carData[splitIndex:]
+    splitIndex = int(0.7 *len(carData)) #Split 70%
+    carTrainingData = carData[:splitIndex]
+    carTestingData = carData[splitIndex:]
 
     targetIndex = -1
+    increments = 40
 
-    #Calculate candidate attributes
-    candidateAttributes = []
-    for attribute in range(len(trainingData[0]) - 1):
-        candidateAttributes.append(attribute)
+    #Should build a tree with a percent of all the training data, print the result. 
+    #It does this until all the training data has been used
+    treeData = {}
+    for i in range(1, increments + 1) :
+        datasetSubsetPercent = i / increments
+        trainingDatapointAmount = max(1, int(datasetSubsetPercent * len(carTrainingData)))  
 
-    #Build the tree using ID3
-    carRatingDecisionTree = LearningDecisionTree()
-    carRatingDecisionTree.root = carRatingDecisionTree.ID3(trainingData, candidateAttributes, targetIndex)
+        # Slice or sample the training data
+        trainingData = carTrainingData[:trainingDatapointAmount]  
 
-    #Make predicitions using the created tree
-    carTrainingDataMajorityLabel = calculateMajorityLabel(trainingData, targetIndex)
+        print(f"\nTree with {datasetSubsetPercent:.0%} training data")
+        iterationData = buildAndPredictTree(carData, trainingData, carTestingData, targetIndex)
+        treeData[datasetSubsetPercent * 100] = iterationData
 
-    trueTargetValueList = []
-    predictedTargetValueList = []
-    correctPredictions = 0
-    for datapoint in testingData:
-        #Collect accuracy data while predicting
-        trueTargetValue = datapoint[targetIndex]
-        trueTargetValueList.append(trueTargetValue)
+    #Create metric graph
+    plotDecisionTreeData(treeData)
+    
+def plotDecisionTreeData(treeData):
+    # Sort by training percentage
+    percents = sorted(treeData.keys())
 
-        predictedTargetValue = predict(carRatingDecisionTree.root, datapoint, carTrainingDataMajorityLabel)
-        predictedTargetValueList.append(predictedTargetValue)
-        
-        if predictedTargetValue == trueTargetValue:
-            correctPredictions += 1
+    # Extract each metric into its own list
+    accuracy = [treeData[p]["accuracy"] for p in percents]
+    macro    = [treeData[p]["macro-average"] for p in percents]
+    weighted = [treeData[p]["weighted-average"] for p in percents]
 
-    carRatingDecisionTreeAccuracy = correctPredictions / len(testingData)
+    # Plot all three lines
+    plt.figure(figsize=(8, 5))
+    plt.plot(percents, accuracy, marker="o", label="Accuracy")
+    plt.plot(percents, macro, marker="o", label="Macro F1")
+    plt.plot(percents, weighted, marker="o", label="Weighted F1")
 
-    #Print the testing data
-    #The size of the training and testing sets
-    print("Total dataset size:", len(carData))
-    print("Training dataset size:", len(trainingData))
-    print("Testing dataset size:", len(testingData))
-
-    #Total Accuracy
-    print(f"\nLearning tree accuracy: {carRatingDecisionTreeAccuracy}\n")
-
-    #Precision, recall and F1-score values for each class
-    #Find the labels categories
-    carLabelCategories = []
-    for row in carData[1:]:  
-        labelCategory = row[targetIndex]
-        if labelCategory not in carLabelCategories:
-            carLabelCategories.append(labelCategory)
-
-    #Calculate precision, recall and f1 for each category
-    carLabelCategoriesPrecision = {} #{category, precision}
-    carLabelCategoriesRecall = {} #{category, recall}
-    carLabelCategoriesF1 = {} #{category, f1}
-
-    for category in carLabelCategories:
-        precision, recall, f1 = calculateF1(category, trueTargetValueList, predictedTargetValueList)
-
-        carLabelCategoriesPrecision[category] = precision
-        carLabelCategoriesRecall[category] = recall
-        carLabelCategoriesF1[category] = f1
-
-        print(f"Class: {category}")
-        print(f"  Precision: {precision:.3f}")
-        print(f"  Recall:    {recall:.3f}")
-        print(f"  F1-score:  {f1:.3f}\n")
-
-    #Calculate the macro-average
-
-    #Plot the learning curve
-        #Implement accuracy while learning
+    plt.xlabel("Training Data Used (%)")
+    plt.ylabel("Score")
+    plt.title(f"Decision Tree Metrics vs Training Data ({len(treeData)} iterations)")
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+    plt.savefig("car-tree-metrics1.png")
 
 if __name__ == "__main__":
     main()
